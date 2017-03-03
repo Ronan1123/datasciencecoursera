@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Ronan1123"
+date: "2 March 2017"
+output: html_document
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.path='Figs/')
+## Require the necessary libraries
+wants <- c("knitr", "caret", "rpart", "randomForest", "rpart.plot")
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has])
+lapply(wants, library, character.only=T)
+## Set the working directory
+work_dir <- "C:/Users/User/DataScience/Practical Machine Learning/Assignment"
+setwd(work_dir)
+```
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to build a model which will correctly classify activities, given unlabelled sets of readings.   More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+## Executive Summary
+
+Our final model was a Random Forest model with the 10 most important variables included as predictors.  The reduced number of variables was to improve model run time at only modest cost on terms of goodness-of-fit.
+
+
+## Data Preparation
+We read the data, treat missing and other error codes as NA and trim whitespace
+```{r echo=TRUE}
+# load the data from the csv files
+fileurl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileurl1, destfile = "trainingData.csv")
+
+fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl2, destfile = "testingData.csv")
+
+
+trainingData <- read.csv("trainingData.csv", header = TRUE, 
+                         na.strings = c("NA", "#DIV/0!", ""), strip.white=T)
+testingData <- read.csv("testingData.csv", header = TRUE, 
+                        na.strings = c("NA", "#DIV/0!", ""), strip.white=T)
+```
+
+We have a quick look at the data structure.  There is a lot of data in the trainingData set: `r nrow(trainingData)` rows and `r ncol(trainingData)` columns. There are only `r nrow(testingData)` observations in the testingData set.
+
+First we set the random seed to ensure reproducibility
+```{r echo=TRUE}
+# set seed
+set.seed(11234)
+```
+
+We create a data partition for training and validation purposes. Then we start to reduce the scale of the problem by removing non-informative variables (near zero variance) or variables with more than 5% missing values.
+```{r echo=TRUE}
+# create training and validation partition in the "training" dataset
+inTrain  <- createDataPartition(trainingData$classe, p=0.7, list=FALSE)
+trainSet <- trainingData[inTrain, ]
+testSet <- trainingData[-inTrain, ]
+
+# remove variables with Nearly Zero Variance
+NZV <- nearZeroVar(trainSet)
+trainSet <- trainSet[, -NZV]
+testSet <- testSet[, -NZV]
+
+# remove variables that are mostly NA
+MostlyNA    <- sapply(trainSet, function(x) mean(is.na(x))) > 0.95
+trainSet <- trainSet[, MostlyNA==FALSE]
+testSet <- testSet[, MostlyNA==FALSE]
+
+# remove identification only variables (columns 1 to 5)
+trainSet <- trainSet[, -(1:5)]
+testSet <- testSet[, -(1:5)]
+```
+Now we have a trainSet with `rncols(trainSet)` variables.
+
+## Exploratory Analysis
+
+Then we consider some models.  First we try a random forest model fit to all the remaining variables.
+
+```{r echo = TRUE}
+# A randomForest model analysis, but takes too long to run
+controlRF <- trainControl(method="cv", number=4, verboseIter=FALSE)
+modelRandForest <- train(classe ~ ., data=trainSet, model="rf", trControl=controlRF)
+modelRandForest$finalModel
+```
+
+##  Model Fitting and Model Diagnostics
+We consider the results of a confusion matrix when predicting on the validation test set and we look for the most important variables (so that we can speed up run-time):
+```{r echo = TRUE}
+predictRandForest <- predict(modelRandForest, newdata=testSet)
+confMatRandForest <- confusionMatrix(predictRandForest, testSet$classe)
+confMatRandForest
+
+varImp(modelRandForest)
+```
+
+The reduced model with just the 10 "most importnat" variables included runs faster with still excellent performance:
+```{r echo = TRUE}
+# A randomForest model analysis with fewer variables (most important 10)
+trainSetSmall <- trainSet[, c("classe", "num_window", "roll_belt", "pitch_forearm", 
+                                      "magnet_dumbbell_y", "magnet_dumbbell_z",
+                                      "pitch_belt", "yaw_belt", "roll_forearm", 
+                                      "roll_dumbbell", "magnet_dumbbell_x")]
+
+controlRFs <- trainControl(method="cv", number=4, verboseIter=FALSE)
+modelRandForestsmall <- train(classe ~ . , data=trainSetSmall, model="rf", 
+                              trControl=controlRF)
+modelRandForestsmall$finalModel
+
+predictRandForestsmall <- predict(modelRandForestsmall, newdata=testSet)
+confMatRandForestsmall <- confusionMatrix(predictRandForestsmall, testSet$classe)
+confMatRandForestsmall
+```
+
+## Final Selected Model and Results
+Finally we use this model to predict the testingData
+```{r echo = FALSE}
+predict(modelRandForestsmall, newdata=testingData)
+```
